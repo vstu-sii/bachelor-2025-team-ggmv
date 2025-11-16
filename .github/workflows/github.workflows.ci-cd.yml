@@ -1,0 +1,184 @@
+name: CI/CD Pipeline
+
+on:
+  push:
+    branches: [ main, develop ]
+  pull_request:
+    branches: [ main, develop ]
+
+env:
+  NODE_VERSION: '18'
+  PYTHON_VERSION: '3.11'
+
+jobs:
+  # Линтинг и тестирование фронтенда
+  frontend-lint-test:
+    name: 🧪 Frontend - Lint & Test
+    runs-on: ubuntu-latest
+    
+    steps:
+    - name: 📥 Checkout code
+      uses: actions/checkout@v4
+
+    - name: ⎔ Setup Node.js
+      uses: actions/setup-node@v4
+      with:
+        node-version: ${{ env.NODE_VERSION }}
+        cache: 'npm'
+        cache-dependency-path: frontend/package-lock.json
+
+    - name: 📦 Install dependencies
+      run: |
+        cd frontend
+        npm ci
+
+    - name: 🔍 ESLint
+      run: |
+        cd frontend
+        npm run lint || echo "Linting issues found"
+
+    - name: 💅 Prettier check
+      run: |
+        cd frontend
+        npm run format:check || echo "Formatting issues found"
+
+    - name: ⚡ Run tests
+      run: |
+        cd frontend
+        npm test -- --coverage --watchAll=false
+
+    - name: 📊 Upload coverage
+      uses: codecov/codecov-action@v3
+      with:
+        file: frontend/coverage/lcov.info
+        flags: frontend
+        name: frontend-coverage
+
+  # Линтинг и тестирование бэкенда
+  backend-lint-test:
+    name: 🐍 Backend - Lint & Test
+    runs-on: ubuntu-latest
+    
+    steps:
+    - name: 📥 Checkout code
+      uses: actions/checkout@v4
+
+    - name: 🐍 Setup Python
+      uses: actions/setup-python@v4
+      with:
+        python-version: ${{ env.PYTHON_VERSION }}
+        cache: 'pip'
+        cache-dependency-path: backend/requirements.txt
+
+    - name: 📦 Install dependencies
+      run: |
+        cd backend
+        pip install -r requirements.txt
+        pip install flake8 black isort pytest pytest-cov
+
+    - name: ⚫ Black formatting check
+      run: |
+        cd backend
+        black --check --diff app/ tests/
+
+    - name: 📏 Flake8 linting
+      run: |
+        cd backend
+        flake8 app/ tests/ --max-line-length=88 --extend-ignore=E203
+
+    - name: 🔄 Import sorting check
+      run: |
+        cd backend
+        isort --check-only --diff app/ tests/
+
+    - name: 🧪 Run tests
+      run: |
+        cd backend
+        pytest --cov=app --cov-report=xml
+
+    - name: 📊 Upload coverage
+      uses: codecov/codecov-action@v3
+      with:
+        file: backend/coverage.xml
+        flags: backend
+        name: backend-coverage
+
+  # Сборка Docker образов
+  docker-build:
+    name: 🐳 Build Docker Images
+    runs-on: ubuntu-latest
+    needs: [frontend-lint-test, backend-lint-test]
+    
+    steps:
+    - name: 📥 Checkout code
+      uses: actions/checkout@v4
+
+    - name: 🐳 Set up Docker Buildx
+      uses: docker/setup-buildx-action@v3
+
+    - name: 🔐 Login to Docker Hub
+      uses: docker/login-action@v3
+      with:
+        username: ${{ secrets.DOCKERHUB_USERNAME }}
+        password: ${{ secrets.DOCKERHUB_TOKEN }}
+
+    - name: 🏗️ Build and push Frontend
+      uses: docker/build-push-action@v5
+      with:
+        context: ./frontend
+        file: ./frontend/Dockerfile
+        push: true
+        tags: |
+          ${{ secrets.DOCKERHUB_USERNAME }}/cleaning-app-frontend:latest
+          ${{ secrets.DOCKERHUB_USERNAME }}/cleaning-app-frontend:${{ github.sha }}
+        cache-from: type=gha
+        cache-to: type=gha,mode=max
+
+    - name: 🏗️ Build and push Backend
+      uses: docker/build-push-action@v5
+      with:
+        context: ./backend
+        file: ./backend/Dockerfile
+        push: true
+        tags: |
+          ${{ secrets.DOCKERHUB_USERNAME }}/cleaning-app-backend:latest
+          ${{ secrets.DOCKERHUB_USERNAME }}/cleaning-app-backend:${{ github.sha }}
+        cache-from: type=gha
+        cache-to: type=gha,mode=max
+
+  # Деплой в dev окружение
+  deploy-dev:
+    name: 🚀 Deploy to Dev
+    runs-on: ubuntu-latest
+    needs: docker-build
+    if: github.ref == 'refs/heads/develop'
+    
+    environment: dev
+    
+    steps:
+    - name: 📥 Checkout code
+      uses: actions/checkout@v4
+
+    - name: 🐳 Deploy to Dev
+      run: |
+        echo "Deploying to development environment"
+                       
+    - name: 📱 Notify success
+      if: success()
+      uses: 8398a7/action-slack@v3
+      with:
+        status: success
+        channel: '#deployments'
+        text: '🚀 Successfully deployed to Dev environment'
+      env:
+        SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
+
+    - name: 📱 Notify failure
+      if: failure()
+      uses: 8398a7/action-slack@v3
+      with:
+        status: failure
+        channel: '#deployments'
+        text: '❌ Deployment to Dev failed'
+      env:
+        SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}

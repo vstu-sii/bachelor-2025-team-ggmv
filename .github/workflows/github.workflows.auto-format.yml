@@ -1,0 +1,48 @@
+name: Auto Format
+
+on:
+  pull_request:
+    branches: [ main, develop ]
+
+permissions:
+  contents: write
+
+jobs:
+  format:
+    name: 💅 Auto Format
+    runs-on: ubuntu-latest
+    
+    steps:
+    - name: 📥 Checkout code
+      uses: actions/checkout@v4
+      with:
+        ref: ${{ github.head_ref }}
+
+    - name: ⎔ Setup Node.js
+      uses: actions/setup-node@v4
+      with:
+        node-version: '18'
+
+    - name: 🐍 Setup Python
+      uses: actions/setup-python@v4
+      with:
+        python-version: '3.11'
+
+    - name: 💅 Format Frontend
+      run: |
+        cd frontend
+        npm install
+        npm run format:write
+
+    - name: ⚫ Format Backend
+      run: |
+        cd backend
+        pip install black isort
+        black app/ tests/
+        isort app/ tests/
+
+    - name: 💾 Commit changes
+      uses: stefanzweifel/git-auto-commit-action@v5
+      with:
+        commit_message: '💅 Auto-formatted code'
+        branch: ${{ github.head_ref }}

@@ -1,0 +1,85 @@
+name: PR Quality Checks
+
+on:
+  pull_request:
+    branches: [ main, develop ]
+
+jobs:
+  code-quality:
+    name: 🔍 Code Quality
+    runs-on: ubuntu-latest
+    
+    steps:
+    - name: 📥 Checkout code
+      uses: actions/checkout@v4
+      with:
+        fetch-depth: 0
+
+    - name: 🔍 Check PR size
+      uses: yykamei/pr-size-checker@v3
+      with:
+        github_token: ${{ secrets.GITHUB_TOKEN }}
+        max_additions: 500
+        max_deletions: 500
+
+    - name: 📝 Check commit messages
+      uses: actions/github-script@v7
+      with:
+        script: |
+          const commits = await github.rest.pulls.listCommits({
+            owner: context.repo.owner,
+            repo: context.repo.repo,
+            pull_number: context.issue.number,
+          });
+          
+          const badCommits = commits.data.filter(commit => 
+            !/^(feat|fix|docs|style|refactor|test|chore): .{10,50}$/.test(commit.commit.message)
+          );
+          
+          if (badCommits.length > 0) {
+            core.setFailed(`Found ${badCommits.length} commits with invalid format. Use: feat|fix|docs|style|refactor|test|chore: description`);
+          }
+
+    - name: 📊 Check test coverage
+      uses: codecov/codecov-action@v3
+      with:
+        token: ${{ secrets.CODECOV_TOKEN }}
+        flags: frontend,backend
+        name: pr-coverage-check
+
+  security-scan:
+    name: 🔒 Security Scan
+    runs-on: ubuntu-latest
+    
+    steps:
+    - name: 📥 Checkout code
+      uses: actions/checkout@v4
+
+    - name: 🐍 Python security check
+      uses: py-actions/pip-audit@v2
+      with:
+        path: backend/requirements.txt
+        format: table
+
+    - name: 📦 npm audit
+      run: |
+        cd frontend
+        npm audit --audit-level moderate
+
+    - name: 🔍 Semgrep SAST
+      uses: returntocorp/semgrep-action@v1
+      with:
+        config: p/security-audit
+
+  dependency-updates:
+    name: 📦 Dependency Updates
+    runs-on: ubuntu-latest
+    
+    steps:
+    - name: 📥 Checkout code
+      uses: actions/checkout@v4
+
+    - name: 🔍 Check for outdated dependencies
+      run: |
+        cd frontend && npm outdated || true
+        cd ../backend && pip list --outdated || true
